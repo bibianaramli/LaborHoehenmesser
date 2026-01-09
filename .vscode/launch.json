@@ -1,0 +1,19 @@
+{
+  // .vscode/launch.json
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "CMake: Debug selected target (GDB, Linux)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${command:cmake.launchTargetPath}",
+      "cwd": "${command:cmake.getLaunchTargetDirectory}",
+      "MIMode": "gdb",
+      "miDebuggerPath": "gdb",
+      "externalConsole": false,
+      "stopAtEntry": false,
+      "args": ["arg1, arg2"],      // <<1>>
+      "preLaunchTask": "CMake: build" // requires CMake Tools extension
+    }
+  ]
+}
