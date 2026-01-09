@@ -1,12 +1,21 @@
 cmake_minimum_required(VERSION 3.10)
-project(MyCProject)
-find_package(SQLite3 REQUIRED)
+project(LaborHeightProfile C)
 
 set(CMAKE_C_STANDARD 11)
-set(CMAKE_BUILD_TYPE Debug)
 
-add_executable(MyCProject-ex src/main.c)
+# Find SQLite3
+find_package(SQLite3 REQUIRED)
 
-add_executable(sql-ex sql_main.c)
-target_link_libraries(sql-ex SQLite::SQLite3)
-add_executable(serial_reader-example src/serial_reader-example.c)
+# Debug: Überprüfen, was gefunden wurde
+message(STATUS "SQLite3_FOUND: ${SQLite3_FOUND}")
+message(STATUS "SQLite3_INCLUDE_DIRS: ${SQLite3_INCLUDE_DIRS}")
+message(STATUS "SQLite3_LIBRARIES: ${SQLite3_LIBRARIES}")
+
+add_executable(LaborTask1 
+    src/main.c 
+    src/sensor.c 
+    src/database.c
+)
+
+target_include_directories(LaborTask1 PRIVATE ${SQLite3_INCLUDE_DIRS})
+target_link_libraries(LaborTask1 PRIVATE ${SQLite3_LIBRARIES})
