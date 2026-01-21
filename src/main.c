@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include "sensor.h"
 #include "database.h"
+#include <sys/time.h> // Für hochauflösende Zeitmessung (Linux/WSL)
 
 // --- Prototypen (Damit main die Funktionen kennt) ---
 void aufgabe1(int fd);
@@ -95,6 +96,68 @@ float interpolate(float x, CalibrationPoint *lut, int count) {
     }
     return x;
 }
+//Aufgabe 3
+#include <sys/time.h> // Für hochauflösende Zeitmessung (Linux/WSL)
+
+// Hilfsfunktion: Gibt die aktuelle Zeit in Sekunden zurück
+double get_timestamp() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (double)tv.tv_sec + (double)tv.tv_usec / 1000000.0;
+}
+
+// Visualisierung: ASCII-Balken
+void print_histogram(float value) {
+    int bar_length = (int)(value / 2.0); // 1 Raute pro 2 cm
+    if (bar_length > 50) bar_length = 50; // Max Länge begrenzen
+    
+    printf("%6.2f cm | ", value);
+    for (int i = 0; i < bar_length; i++) {
+        printf("#");
+    }
+    printf("\n");
+}
+
+void aufgabe3(int fd) {
+    CalibrationPoint lut[100];
+    int count = get_calibration_data(lut, 100);
+    
+    int num_samples = 20;
+    double timestamps[20];
+    float values[20];
+    
+    printf("\n--- Aufgabe 3: Echtzeit-Profil & Timing ---\n");
+    
+    for (int i = 0; i < num_samples; i++) {
+        timestamps[i] = get_timestamp();
+        float raw = get_sensor_value(fd);
+        values[i] = interpolate(raw, lut, count); // Korrigierten Wert nutzen
+        
+        // Live Visualisierung
+        print_histogram(values[i]);
+        
+        save_measurement_task3(values[i], timestamps[i]);
+    }
+
+    // --- Zeit-Analyse ---
+    double min_dt = 999.0, max_dt = 0.0, sum_dt = 0.0;
+    
+    for (int i = 1; i < num_samples; i++) {
+        double dt = timestamps[i] - timestamps[i-1];
+        if (dt < min_dt) min_dt = dt;
+        if (dt > max_dt) max_dt = dt;
+        sum_dt += dt;
+    }
+    
+    double avg_dt = sum_dt / (num_samples - 1);
+
+    printf("\n--- Timing Statistik ---\n");
+    printf("Min Zeitabstand: %.4f s\n", min_dt);
+    printf("Max Zeitabstand: %.4f s\n", max_dt);
+    printf("Durchschnitt:    %.4f s\n", avg_dt);
+    
+    export_to_csv("messung_3.csv");
+}
 
 int main() {
     init_db("labor.db");
@@ -113,6 +176,7 @@ int main() {
         printf("============================\n");
         printf("1. Aufgabe 1 (Datenaufnahme)\n");
         printf("2. Aufgabe 2 (Test-Modus/LUT)\n");
+        printf("3. Aufgabe 3 (Echtzeit-Profil & Timing)\n");
         printf("0. Beenden\n");
         printf("Wahl: ");
         
@@ -127,6 +191,7 @@ int main() {
         switch(choice) {
             case 1: aufgabe1(fd); break;
             case 2: aufgabe2(fd); break;
+            case 3: aufgabe3(fd); break;
             case 0: printf("Programm wird beendet...\n"); break;
             default: printf("Option nicht verfuegbar.\n");
         }

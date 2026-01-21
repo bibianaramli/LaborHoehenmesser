@@ -68,3 +68,11 @@ int save_test_measurement(float sensor_raw, float interpolated) {
             interpolated, sensor_raw, interpolated - sensor_raw);
     return sqlite3_exec(db, sql, 0, 0, 0);
 }
+//Aufgabe3 
+int save_measurement_task3(float dist, double ts) {
+    char sql[256];
+    // Wir speichern den Abstand und den Zeitstempel
+    sprintf(sql, "INSERT INTO measurements (real_dist, sensor_dist, diff) VALUES (%f, %f, 0.0);", 
+            dist, (float)ts); // Wir "missbrauchen" sensor_dist hier kurz für den TS oder passen die DB an
+    return sqlite3_exec(db, sql, 0, 0, 0);
+}
