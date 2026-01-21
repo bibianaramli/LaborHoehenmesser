@@ -43,3 +43,28 @@ void export_to_csv(const char *filename) {
     fclose(f);
     printf("Datei %s wurde erfolgreich erstellt.\n", filename);
 }
+
+int get_calibration_data(CalibrationPoint *points, int max_points) {
+    sqlite3_stmt *res;
+    const char *sql = "SELECT real_dist, sensor_dist FROM measurements ORDER BY sensor_dist ASC";
+    
+    if (sqlite3_prepare_v2(db, sql, -1, &res, 0) != SQLITE_OK) return 0;
+
+    int i = 0;
+    while (sqlite3_step(res) == SQLITE_ROW && i < max_points) {
+        // Hier die Namen anpassen:
+        points[i].real_dist = (float)sqlite3_column_double(res, 0);
+        points[i].sensor_dist = (float)sqlite3_column_double(res, 1);
+        i++;
+    }
+    sqlite3_finalize(res);
+    return i;
+}
+
+int save_test_measurement(float sensor_raw, float interpolated) {
+    char sql[256];
+    // Wir speichern den berechneten "realen" Wert und den rohen Sensorwert
+    sprintf(sql, "INSERT INTO measurements (real_dist, sensor_dist, diff) VALUES (%f, %f, %f);", 
+            interpolated, sensor_raw, interpolated - sensor_raw);
+    return sqlite3_exec(db, sql, 0, 0, 0);
+}
