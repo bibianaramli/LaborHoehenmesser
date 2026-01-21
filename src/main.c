@@ -7,6 +7,7 @@
 // --- Prototypen (Damit main die Funktionen kennt) ---
 void aufgabe1(int fd);
 void aufgabe2(int fd);
+void aufgabe4();
 float interpolate(float x, CalibrationPoint *lut, int count);
 void clear_buffer(); // Hilfsfunktion um den Tastaturpuffer zu leeren
 
@@ -158,6 +159,53 @@ void aufgabe3(int fd) {
     
     export_to_csv("messung_3.csv");
 }
+//Aufgabe4
+void aufgabe4() {
+    printf("\n--- Aufgabe 4: Mittelwert-Filter (Glättung) ---\n");
+
+    // 1. Daten aus der Datenbank laden (die Werte aus Aufgabe 3)
+    CalibrationPoint data[100];
+    int count = get_calibration_data(data, 100);
+
+    if (count < 3) {
+        printf("Fehler: Zu wenige Daten für einen 3-Punkt-Filter (min. 3 benötigt)!\n");
+        return;
+    }
+
+    float filtered[100];
+    
+    // 2. Filter anwenden: u(m) = (y(m-1) + y(m) + y(m+1)) / 3
+    // Den ersten und letzten Wert übernehmen wir einfach, da sie keine zwei Nachbarn haben
+    filtered[0] = data[0].real_dist; 
+    
+    for (int m = 1; m < count - 1; m++) {
+        // Die Formel laut Aufgabenstellung 
+        filtered[m] = (data[m-1].real_dist + data[m].real_dist + data[m+1].real_dist) / 3.0f;
+    }
+
+    filtered[count-1] = data[count-1].real_dist;
+
+    // 3. Ausgabe und Export in messung_4.csv 
+    printf("%-5s | %-10s | %-10s | %-10s\n", "Nr", "Original", "Gefiltert", "Differenz");
+    printf("----------------------------------------------\n");
+    
+    FILE *f = fopen("messung_4.csv", "w");
+    if (f == NULL) {
+        printf("Fehler beim Erstellen von messung_4.csv\n");
+        return;
+    }
+    fprintf(f, "sep=;\n");
+    fprintf(f, "Nr,Original,Gefiltert,Differenz\n");
+
+    for (int i = 0; i < count; i++) {
+        float diff = data[i].real_dist - filtered[i];
+        printf("%5d | %10.2f | %10.2f | %10.2f\n", i+1, data[i].real_dist, filtered[i], diff);
+        fprintf(f, "%d;%.2f;%.2f;%.2f\n", i + 1, data[i].real_dist, filtered[i], diff);
+    }
+
+    fclose(f);
+    printf("\nFilterung abgeschlossen. Daten in messung_4.csv gespeichert.\n");
+}
 
 int main() {
     init_db("labor.db");
@@ -177,6 +225,7 @@ int main() {
         printf("1. Aufgabe 1 (Datenaufnahme)\n");
         printf("2. Aufgabe 2 (Test-Modus/LUT)\n");
         printf("3. Aufgabe 3 (Echtzeit-Profil & Timing)\n");
+        printf("4. Aufgabe 4 (Mittelwert-Filter)\n");
         printf("0. Beenden\n");
         printf("Wahl: ");
         
@@ -192,6 +241,7 @@ int main() {
             case 1: aufgabe1(fd); break;
             case 2: aufgabe2(fd); break;
             case 3: aufgabe3(fd); break;
+            case 4: aufgabe4(); break;
             case 0: printf("Programm wird beendet...\n"); break;
             default: printf("Option nicht verfuegbar.\n");
         }
