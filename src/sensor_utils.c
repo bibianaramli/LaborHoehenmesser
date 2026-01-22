@@ -1,9 +1,6 @@
 #include "sensor_utils.h"
 #include <termios.h>
 #include <fcntl.h>
-#include <unistd.h>
-#include <errno.h>
-
 
 int configure_serial(int fd) {
     struct termios tty;
@@ -29,12 +26,12 @@ float convert_to_sensor_val(const char *line) {
 }
 
 ssize_t read_sim(char* chunk, size_t chunk_len) {
-    static sim_data s_data = {32, 0, 
-        {10.2, 10.2, 8.5, 7.0, 5.0, 5.0, 5.0, 7.0, 8.5, 10.2, 10.2} // Beispiel Profil
+    static sim_data s_data = {11, 0, 
+        {10.2, 10.0, 8.5, 7.0, 5.0, 4.5, 5.0, 7.0, 8.5, 10.0, 10.2}
     };
-    usleep(100000); // 100ms Simulation
+    usleep(100000); 
     float value = s_data.data[s_data.index];
-    s_data.index = (s_data.index + 1) % 11; // Nur Beispielwerte nutzen
+    s_data.index = (s_data.index + 1) % s_data.length;
     return snprintf(chunk, chunk_len, "%.2f\n", value);
 }
 
@@ -52,80 +49,54 @@ int execute_sql(sqlite3 *db, const char *sql) {
     return rc;
 }
 
-void print_histogram(float values[], int count, float zero_level) {
-    printf("\n--- Styrodur Profil (Histogramm) ---\n");
-    for (int i = 0; i < count; i++) {
-        float height = zero_level - values[i];
-        if (height < 0) height = 0;
-        printf("[%03d]: ", i);
-        for (int j = 0; j < (int)(height * 2); j++) printf("#");
-        printf(" (%.2f cm)\n", height);
+// Das Histogramm "von links nach rechts" (Profil-Ansicht)
+void print_histogram_horizontal(float values[], int count, float max_val) {
+    printf("\n--- Profil-Scan (Horizontal) ---\n");
+    
+    for (float h = max_val; h > 0; h -= 0.5) {
+        for (int i = 0; i < count; i++) {
+            if (values[i] >= h) {
+                printf("#");
+            } else {
+                printf(" ");
+            }
+        }
+        printf(" %.1f cm\n", h);
     }
 }
+
 float calibrate_sensor(int fd, int is_sim) {
-    printf("Kalibrierung: Bitte Sensor auf den leeren Boden richten...\n");
+    printf("Kalibrierung läuft (Sensor auf Boden richten)...\n");
     float sum = 0;
     int count = 0;
     char line_buf[READ_CHUNK];
     int line_pos = 0;
-
     while (count < 10) {
         char chunk[READ_CHUNK];
-        ssize_t b_read;
-        if (is_sim) b_read = read_sim(chunk, sizeof(chunk));
-        else b_read = read(fd, chunk, sizeof(chunk));
-
+        ssize_t b_read = is_sim ? read_sim(chunk, sizeof(chunk)) : read(fd, chunk, sizeof(chunk));
         if (b_read > 0) {
             for (int i = 0; i < b_read; i++) {
                 if (chunk[i] == '\n' && line_pos > 0) {
                     line_buf[line_pos] = '\0';
                     float val = convert_to_sensor_val(line_buf);
-                    if (val > 1.0) { // Ignoriere Fehlmessungen
-                        sum += val;
-                        count++;
-                        printf("Kalibrierung Schritt %d/10: %.2f cm\r", count, val);
-                        fflush(stdout);
-                    }
+                    if (val > 1.0) { sum += val; count++; }
                     line_pos = 0;
                 } else if (chunk[i] != '\r' && chunk[i] != '\n') {
                     if (line_pos < READ_CHUNK - 1) line_buf[line_pos++] = chunk[i];
                 }
             }
         }
-        usleep(50000);
     }
-    float result = sum / 10.0f;
-    printf("\nKalibrierung fertig. Null-Niveau: %.2f cm\n", result);
-    return result;
+    return sum / 10.0f;
 }
-void save_histogram_to_csv(const char* filename, float values[], int count, float zero_level) {
-    // Wir versuchen die Datei ohne Pfadangabe zu öffnen
-    // Wenn das fehlschlägt, liegt es oft an den Rechten des 'build' Ordners
-    FILE *fp = fopen(filename, "w"); 
-    
-    if (fp == NULL) {
-        // Falls das fehlschlägt, versuchen wir es im übergeordneten Ordner
-        char fallback_path[256];
-        snprintf(fallback_path, sizeof(fallback_path), "../%s", filename);
-        fp = fopen(fallback_path, "w");
-        
-        if (fp == NULL) {
-            fprintf(stderr, "Kritischer Fehler: Kann Datei weder in '.' noch in '..' erstellen.\n");
-            fprintf(stderr, "System-Fehlermeldung: %s\n", strerror(errno));
-            return;
-        }
-        printf("Hinweis: Datei wurde im Hauptordner (statt build) gespeichert.\n");
-    }
 
-    fprintf(fp, "Index,Hoehe_cm,Profil_Horizontal\n");
+void save_histogram_to_csv(const char* filename, float values[], int count, float zero_level) {
+    FILE *fp = fopen(filename, "w");
+    if (!fp) return;
+    fprintf(fp, "Index,Hoehe_cm\n");
     for (int i = 0; i < count; i++) {
-        float height = zero_level - values[i];
-        if (height < 0) height = 0;
-        fprintf(fp, "%d,%.2f,", i, height);
-        int num_hashes = (int)(height * 2); 
-        for (int j = 0; j < num_hashes; j++) fputc('#', fp);
-        fprintf(fp, "\n");
+        fprintf(fp, "%d,%.2f\n", i, values[i]);
     }
     fclose(fp);
-    printf("Erfolg! Datei gespeichert.\n");
+    printf("CSV gespeichert: %s\n", filename);
 }
