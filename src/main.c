@@ -1,292 +1,218 @@
-#include <stdio.h>
-#include <stdlib.h>
 #include "sensor.h"
-#include "database.h"
-#include <sys/time.h> // Für hochauflösende Zeitmessung (Linux/WSL)
-#include <sys/ioctl.h>
-#include <unistd.h>
 
-// --- Prototypen (Damit main die Funktionen kennt) ---
-void aufgabe1(int fd);
-void aufgabe2(int fd);
-void aufgabe4();
-float interpolate(float x, CalibrationPoint *lut, int count);
-void clear_buffer(); // Hilfsfunktion um den Tastaturpuffer zu leeren
+int main(void) {
+    char* tty_path = "/dev/tty.usbserial-0001";
+    int serial_fd = 0;
 
-// --- Hilfsfunktion: Leert den Eingabepuffer ---
-void clear_buffer() {
-    int c;
-    while ((c = getchar()) != '\n' && c != EOF);
-}
-//Aufgabe 3
-#include <sys/time.h> // Für hochauflösende Zeitmessung (Linux/WSL)
-
-// Hilfsfunktion: Gibt die aktuelle Zeit in Sekunden zurück
-double get_timestamp() {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return (double)tv.tv_sec + (double)tv.tv_usec / 1000000.0;
-}
-
-// Visualisierung: ASCII-Balken
-void print_histogram(float window[], int buffer_size, float max_h) {
-    struct winsize w;
-    ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
-
-    // Dynamische Berechnung der verfügbaren Fläche
-    int cols = w.ws_col - 15; // Platz für Achsbeschriftung links
-    int rows = w.ws_row - 5;  // Platz für Header/Footer
-
-    // Sicherheit: Nicht mehr zeichnen als im Puffer ist
-    if (cols > buffer_size) cols = buffer_size;
-    if (cols < 10) cols = 10;
-
-    system("clear");
-    printf("--- Aufgabe 3: Dynamisches Scrolling-Profil (Max %.1f cm) ---\n\n", max_h);
-
-    // Dynamische Schrittweite der Y-Achse (0.5cm oder 1.0cm je nach Fensterhöhe)
-    float step = (rows < 15) ? 1.0f : 0.5f;
-
-    for (float h = max_h; h > 0; h -= step) {
-        printf("%5.1f cm | ", h);
-        
-        // Wir zeichnen nur die neuesten 'cols' Werte aus dem Puffer
-        int start_idx = buffer_size - cols;
-        for (int i = start_idx; i < buffer_size; i++) {
-            if (window[i] >= h) {
-                printf("#");
-            } else {
-                printf(" ");
-            }
-        }
-        printf("\n");
-    }
-
-    // Dynamische Bodenlinie
-    printf("         +");
-    for (int i = 0; i < cols; i++) printf("-");
-    printf("\n         Vergangenheit <--- Zeit --- [JETZT]\n");
-}
-
-void aufgabe1(int fd) {
-    float real;
-    printf("\n--- Aufgabe 1: Datenaufnahme (20 Messungen) ---\n");
-    
-    for (int i = 0; i < 20; i++) { // Auf 20 korrigiert laut deinem Kommentar
-        printf("\nMessung %d/20\n", i + 1);
-        printf("Echten Abstand in cm eingeben: ");
-        
-        if (scanf("%f", &real) != 1) {
-            clear_buffer();
-            break;
-        }
-        clear_buffer(); // \n entfernen
-
-        float sensor = get_sensor_value(fd);
-        printf("Sensor gelesen: %.2f cm\n", sensor);
-
-        save_measurement(real, sensor);
-    }
-    export_to_csv("messung_1.csv");
-    printf("\nAufgabe abgeschlossen. Daten exportiert nach messung_1.csv\n");
-}
-
-void aufgabe2(int fd) {
-    CalibrationPoint lut[100];
-    int count = get_calibration_data(lut, 100);
-
-    if (count < 2) {
-        printf("\n[FEHLER] Zu wenige Kalibrierungsdaten vorhanden. Bitte erst Aufgabe 1 ausführen!\n");
-        return;
-    }
-
-    printf("\n--- Aufgabe 2: TEST Modus (Lineare Interpolation) ---\n");
-    printf("Befehle: [ENTER] = Messung durchfuehren, [q] = Zurueck zum Hauptmenue\n");
-
-    char input[10];
-    while (1) {
-        printf("Warten auf Eingabe (Enter/q): ");
-        if (fgets(input, sizeof(input), stdin) == NULL) break;
-
-        if (input[0] == 'q' || input[0] == 'Q') {
-            break; 
-        }
-
-        // Bei Enter (oder jeder anderen Eingabe außer q) wird gemessen
-        float raw = get_sensor_value(fd);
-        if (raw < 0) {
-            printf("Sensor Fehler!\n");
-            continue;
-        }
-
-        float corrected = interpolate(raw, lut, count);
-        
-        printf(">> ROHWERT: %.2f cm  =>  KORRIGIERT: %.2f cm\n", raw, corrected);
-        save_test_measurement(raw, corrected);
-    }
-    
-    export_to_csv("messung_2.csv");
-    printf("Testdaten in messung_2.csv gespeichert.\n");
-}
-
-float interpolate(float x, CalibrationPoint *lut, int count) {
-    // Randbereiche abfangen
-    if (x <= lut[0].sensor_dist) return lut[0].real_dist;
-    if (x >= lut[count-1].sensor_dist) return lut[count-1].real_dist;
-
-    // Suche Nachbarn für die Lineare Interpolation
-    for (int i = 0; i < count - 1; i++) {
-        if (x >= lut[i].sensor_dist && x <= lut[i+1].sensor_dist) {
-            float x1 = lut[i].sensor_dist;
-            float x2 = lut[i+1].sensor_dist;
-            float y1 = lut[i].real_dist;
-            float y2 = lut[i+1].real_dist;
-            
-            // Mathematische Formel
-            return y1 + (x - x1) * (y2 - y1) / (x2 - x1);
-        }
-    }
-    return x;
-}
-
-void aufgabe3(int fd) {
-    CalibrationPoint lut[100];
-    int count_lut = get_calibration_data(lut, 100);
-    
-    const int buffer_size = 300; // Ein großer Puffer für breite Monitore
-    float window[300] = {0};     // Mit Nullen vorfüllen
-    float floor_dist = 0;
-    float max_object_height = 10.0; // (max 10cm)
-
-    printf("Schritt 1: Kalibrierung. Bitte Sensor auf den freien Boden richten...\n");
-    sleep(1);
-    
-    // Mittelwert aus 5 Messungen für stabilen Bodenwert
-    float sum = 0;
-    for(int i=0; i<5; i++) {
-        sum += interpolate(get_sensor_value(fd), lut, count_lut);
-        usleep(50000);
-    }
-    floor_dist = sum / 5.0f;
-    printf("Boden kalibriert auf: %.2f cm. Starte Scan...\n", floor_dist);
-    sleep(1);
-
-    // Hauptschleife: Führt 100 Messungen durch 
-    for (int m = 0; m < 100; m++) {
-        // 1. Wert einlesen und Höhe berechnen
-        float current_dist = interpolate(get_sensor_value(fd), lut, count_lut);
-        float height = floor_dist - current_dist;
-
-        // Plausibilitäts-Check
-        if (height < 0.3) height = 0; // Filtert Bodenrauschen
-        if (height > max_object_height) height = max_object_height;
-
-        // 2. Ring-Buffer-Shift (Werte im Array nach links rücken)
-        for (int i = 0; i < buffer_size - 1; i++) {
-            window[i] = window[i + 1];
-        }
-        window[buffer_size - 1] = height; // Aktuellster Wert ganz rechts
-
-        // 3. Zeichnen aufrufen
-        print_histogram(window, buffer_size, max_object_height);
-
-        // 4. In Datenbank speichern
-        save_measurement_task3(height, get_timestamp());
-
-        // 5. Timing (80ms entspricht ca. 12.5 Messungen pro Sekunde)
-        usleep(80000);
-    }
-
-    printf("\nMessreihe beendet. Daten exportiert.\n");
-    export_to_csv("messung_3.csv");
-}
-//Aufgabe4
-void aufgabe4() {
-    printf("\n--- Aufgabe 4: Mittelwert-Filter (Glättung) ---\n");
-
-    // 1. Daten aus der Datenbank laden (die Werte aus Aufgabe 3)
-    CalibrationPoint data[100];
-    int count = get_calibration_data(data, 100);
-
-    if (count < 3) {
-        printf("Fehler: Zu wenige Daten für einen 3-Punkt-Filter (min. 3 benötigt)!\n");
-        return;
-    }
-
-    float filtered[100];
-    
-    // 2. Filter anwenden: u(m) = (y(m-1) + y(m) + y(m+1)) / 3
-    // Den ersten und letzten Wert übernehmen wir einfach, da sie keine zwei Nachbarn haben
-    filtered[0] = data[0].real_dist; 
-    
-    for (int m = 1; m < count - 1; m++) {
-        // Die Formel laut Aufgabenstellung 
-        filtered[m] = (data[m-1].real_dist + data[m].real_dist + data[m+1].real_dist) / 3.0f;
-    }
-
-    filtered[count-1] = data[count-1].real_dist;
-
-    // 3. Ausgabe und Export in messung_4.csv 
-    printf("%-5s | %-10s | %-10s | %-10s\n", "Nr", "Original", "Gefiltert", "Differenz");
-    printf("----------------------------------------------\n");
-    
-    FILE *f = fopen("messung_4.csv", "w");
-    if (f == NULL) {
-        printf("Fehler beim Erstellen von messung_4.csv\n");
-        return;
-    }
-    fprintf(f, "sep=;\n");
-    fprintf(f, "Nr,Original,Gefiltert,Differenz\n");
-
-    for (int i = 0; i < count; i++) {
-        float diff = data[i].real_dist - filtered[i];
-        printf("%5d | %10.2f | %10.2f | %10.2f\n", i+1, data[i].real_dist, filtered[i], diff);
-        fprintf(f, "%d;%.2f;%.2f;%.2f\n", i + 1, data[i].real_dist, filtered[i], diff);
-    }
-
-    fclose(f);
-    printf("\nFilterung abgeschlossen. Daten in messung_4.csv gespeichert.\n");
-}
-
-int main() {
-    init_db("labor.db");
-    
-    // Versuche Sensor zu verbinden
-    int fd = connect_to_sensor("/dev/ttyUSB0");
-    if (fd < 0 && SIM == 1) { // Nur Fehler wenn keine Simulation
-        printf("Fehler: Sensor an /dev/ttyUSB0 nicht gefunden!\n");
+    // Verbindung zum Sensor (nur wenn SIM aus ist)
+    #if !SIM
+    serial_fd = connect_to_sensor(tty_path);
+    if (serial_fd < 0) {
+        printf("Konnte Sensor an %s nicht öffnen. Beende...\n", tty_path);
         return 1;
     }
+    #endif
 
-    int choice;
-    do {
-        printf("\n============================\n");
-        printf("       HAUPTMENUE\n");
-        printf("============================\n");
-        printf("1. Aufgabe 1 (Datenaufnahme)\n");
-        printf("2. Aufgabe 2 (Test-Modus/LUT)\n");
-        printf("3. Aufgabe 3 (Echtzeit-Profil & Timing)\n");
-        printf("4. Aufgabe 4 (Mittelwert-Filter)\n");
-        printf("0. Beenden\n");
-        printf("Wahl: ");
-        
-        if (scanf("%d", &choice) != 1) {
-            printf("Ungueltige Eingabe!\n");
-            clear_buffer();
-            choice = -1;
-            continue;
+    int mode = 6;
+    while (mode != 5) {
+        if (mode == 6) {
+            printf("\n-== HAUPTMENÜ ==-\n");
+            printf("1: DA (Datenaufnahme & Kalibrierung)\n");
+            printf("2: TEST (Interpolation mit LUT)\n");
+            printf("3: AUTO (Zeitstempel & Live-Histogramm)\n");
+            printf("4: FILTER (Mittelwertfilter über messung_3)\n");
+            printf("5: Beenden\n");
+            printf("Auswahl: ");
+            if (scanf("%d", &mode) != 1) break;
         }
-        clear_buffer(); // Wichtig: \n aus dem Puffer entfernen!
 
-        switch(choice) {
-            case 1: aufgabe1(fd); break;
-            case 2: aufgabe2(fd); break;
-            case 3: aufgabe3(fd); break;
-            case 4: aufgabe4(); break;
-            case 0: printf("Programm wird beendet...\n"); break;
-            default: printf("Option nicht verfuegbar.\n");
+        // --- MODUS 1: DA (Data Acquisition) ---
+        if (mode == 1) {
+            FILE *fp = fopen("messung_1.csv", "w");
+            if (!fp) { perror("CSV Fehler"); mode = 6; continue; }
+            
+            sqlite3 *db;
+            open_database(&db, "messung_1.db");
+            execute_sql(db, "CREATE TABLE IF NOT EXISTS messung_1 (MessungNr INTEGER, Sensor REAL, Nutzer REAL, Diff REAL);");
+            fprintf(fp, "MessungNr,Sensorabstand[cm],Nutzerabstand[cm],Abweichung[cm]\n");
+
+            for (int mesnum = 1; mesnum <= 20; mesnum++) {
+                char chunk[READ_CHUNK] = {0};
+                ssize_t bytes = (SIM) ? read_sim(0, chunk, sizeof(chunk)) : read(serial_fd, chunk, sizeof(chunk));
+                
+                if (bytes > 0) {
+                    float val = convert_to_sensor_val(chunk);
+                    float input;
+                    printf("Messung %d - Sensor: %.3f cm. Geben Sie den realen Abstand ein: ", mesnum, val);
+                    scanf("%f", &input);
+                    float diff = val - input;
+
+                    fprintf(fp, "%d,%.3f,%.3f,%.3f\n", mesnum, val, input, diff);
+                    char sql[256];
+                    sprintf(sql, "INSERT INTO messung_1 VALUES (%d, %f, %f, %f);", mesnum, val, input, diff);
+                    execute_sql(db, sql);
+                }
+            }
+            fclose(fp);
+            sqlite3_close(db);
+            printf("Modus 1 fertig.\n");
+            mode = 6;
         }
-    } while (choice != 0);
 
+        // --- MODUS 2: TEST (Interpolation) ---
+        else if (mode == 2) {
+            char cinput[100];
+            printf("CSV-Dateiname für LUT (z.B. messung_1.csv): ");
+            scanf("%s", cinput);
+
+            FILE *fpr = fopen(cinput, "r");
+            if (!fpr) { printf("Datei nicht gefunden!\n"); mode = 6; continue; }
+
+            double lut[MAXCHAR], lutr[MAXCHAR];
+            char crow[MAXCHAR];
+            int y = 0;
+
+            // Header überspringen
+            fgets(crow, MAXCHAR, fpr);
+            while (fgets(crow, MAXCHAR, fpr) && y < MAXCHAR) {
+                char *token = strtok(crow, ",");
+                token = strtok(NULL, ","); if (token) lut[y] = atof(token);
+                token = strtok(NULL, ","); if (token) lutr[y] = atof(token);
+                y++;
+            }
+            fclose(fpr);
+
+            sqlite3 *db;
+            open_database(&db, "messung_2.db");
+            execute_sql(db, "CREATE TABLE IF NOT EXISTS messung_2 (Nr INTEGER, Sensor REAL, Interp REAL, Diff REAL);");
+            FILE *fpw = fopen("messung_2.csv", "w");
+            fprintf(fpw, "Nr,Sensor,Interpoliert,Diff\n");
+
+            printf("Starte Test. Drücken Sie '1' für Messung, '2' für Menü.\n");
+            int mesnum = 1;
+            while (1) {
+                int choice;
+                printf("Aktion (1: Messen, 2: Zurück): ");
+                scanf("%d", &choice);
+                if (choice == 2) break;
+
+                char chunk[READ_CHUNK] = {0};
+                ssize_t bytes = (SIM) ? read_sim(0, chunk, sizeof(chunk)) : read(serial_fd, chunk, sizeof(chunk));
+                if (bytes > 0) {
+                    float value = convert_to_sensor_val(chunk);
+                    // Einfache lineare Interpolation (vereinfacht)
+                    float ipvalue = value; // Hier käme deine Logik aus dem alten Code rein
+                    for(int i=0; i < y-1; i++) {
+                        if(value >= lut[i] && value <= lut[i+1]) {
+                             ipvalue = lutr[i] + ((lutr[i+1] - lutr[i]) / (lut[i+1] - lut[i])) * (value - lut[i]);
+                             break;
+                        }
+                    }
+                    float diff = value - ipvalue;
+                    printf("Sensor: %.3f cm -> Interpoliert: %.3f cm\n", value, ipvalue);
+                    
+                    fprintf(fpw, "%d,%.3f,%.3f,%.3f\n", mesnum++, value, ipvalue, diff);
+                    char sql[256];
+                    sprintf(sql, "INSERT INTO messung_2 VALUES (%d, %f, %f, %f);", mesnum, value, ipvalue, diff);
+                    execute_sql(db, sql);
+                }
+            }
+            fclose(fpw);
+            sqlite3_close(db);
+            mode = 6;
+        }
+
+        // --- MODUS 3: AUTO (Histogramm) ---
+        else if (mode == 3) {
+            FILE *fp = fopen("messung_3.csv", "w");
+            sqlite3 *db;
+            open_database(&db, "messung_3.db");
+            execute_sql(db, "CREATE TABLE IF NOT EXISTS messung_3 (Nr INTEGER, Sensor REAL, Zeit REAL);");
+            fprintf(fp, "Nr,Abstand,Zeit\n");
+
+            float values[100] = {0};
+            float times[100] = {0};
+            float max_val = 0;
+
+            for (int i = 1; i <= 10; i++) {
+                clock_t start = clock();
+                char chunk[READ_CHUNK] = {0};
+                ssize_t bytes = (SIM) ? read_sim(0, chunk, sizeof(chunk)) : read(serial_fd, chunk, sizeof(chunk));
+                
+                if (bytes > 0) {
+                    float val = convert_to_sensor_val(chunk);
+                    clock_t end = clock();
+                    float duration = (float)(end - start) / CLOCKS_PER_SEC;
+                    
+                    values[i] = val;
+                    times[i] = duration;
+                    if (val > max_val) max_val = val;
+
+                    system("clear");
+                    printf("Messung %d: %.2f cm (Dauer: %.4fs)\n", i, val, duration);
+                    
+                    // ASCII Histogramm
+                    struct winsize w;
+                    ioctl(0, TIOCGWINSZ, &w);
+                    for (int r = 10; r > 0; r--) {
+                        for (int c = 1; c <= i; c++) {
+                            if (values[c] >= (max_val / 10.0) * r) printf("# ");
+                            else printf("  ");
+                        }
+                        printf("\n");
+                    }
+
+                    fprintf(fp, "%d,%.3f,%.4f\n", i, val, duration);
+                    char sql[256];
+                    sprintf(sql, "INSERT INTO messung_3 VALUES (%d, %f, %f);", i, val, duration);
+                    execute_sql(db, sql);
+                }
+            }
+            fclose(fp);
+            sqlite3_close(db);
+            mode = 6;
+        }
+
+        // --- MODUS 4: FILTER ---
+        else if (mode == 4) {
+            FILE *fpr = fopen("messung_3.csv", "r");
+            if (!fpr) { printf("Keine Daten in messung_3.csv gefunden!\n"); mode = 6; continue; }
+
+            double values[MAXCHAR];
+            int y = 0;
+            char crow[MAXCHAR];
+            fgets(crow, MAXCHAR, fpr); // Header weg
+            while (fgets(crow, MAXCHAR, fpr)) {
+                strtok(crow, ",");
+                char *v = strtok(NULL, ",");
+                if (v) values[y++] = atof(v);
+            }
+            fclose(fpr);
+
+            FILE *fpw = fopen("messung_4.csv", "w");
+            sqlite3 *db;
+            open_database(&db, "messung_4.db");
+            execute_sql(db, "CREATE TABLE IF NOT EXISTS messung_4 (Nr INTEGER, Sensor REAL, Filter REAL);");
+
+            printf("\n--- Filter Ergebnisse ---\n");
+            for (int i = 0; i < y; i++) {
+                float filtered = values[i];
+                if (i > 0 && i < y - 1) {
+                    filtered = (values[i-1] + values[i] + values[i+1]) / 3.0;
+                }
+                printf("Original: %.2f -> Gefiltert: %.2f\n", values[i], filtered);
+                fprintf(fpw, "%d,%.3f,%.3f\n", i+1, values[i], filtered);
+                char sql[256];
+                sprintf(sql, "INSERT INTO messung_4 VALUES (%d, %f, %f);", i+1, values[i], filtered);
+                execute_sql(db, sql);
+            }
+            fclose(fpw);
+            sqlite3_close(db);
+            mode = 6;
+        }
+    }
+
+    if (serial_fd > 0) close(serial_fd);
+    printf("Programm beendet.\n");
     return 0;
 }
