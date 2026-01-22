@@ -14,9 +14,9 @@ int init_db(const char *db_name) {
     if (rc_create != SQLITE_OK) return rc_create;
 
     // Tabelle leeren, damit nur die aktuellen 20 Werte drin sind
-   //const char *sql_delete = "DELETE FROM measurments;";
-   //int rc_delete = sqlite3_exec(db, sql_delete, 0, 0, 0);
-   //return rc_delete; // Gibt 0 bei Erfolg oder Fehlercode zurück
+   const char *sql_delete = "DELETE FROM measurments;";
+   int rc_delete = sqlite3_exec(db, sql_delete, 0, 0, 0);
+   return rc_delete; // Gibt 0 bei Erfolg oder Fehlercode zurück
 }
 
 int save_measurement(float real, float sensor) {
