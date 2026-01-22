@@ -3,6 +3,8 @@
 #include "sensor.h"
 #include "database.h"
 #include <sys/time.h> // Für hochauflösende Zeitmessung (Linux/WSL)
+#include <sys/ioctl.h>
+#include <unistd.h>
 
 // --- Prototypen (Damit main die Funktionen kennt) ---
 void aufgabe1(int fd);
@@ -15,6 +17,55 @@ void clear_buffer(); // Hilfsfunktion um den Tastaturpuffer zu leeren
 void clear_buffer() {
     int c;
     while ((c = getchar()) != '\n' && c != EOF);
+}
+//Aufgabe 3
+#include <sys/time.h> // Für hochauflösende Zeitmessung (Linux/WSL)
+
+// Hilfsfunktion: Gibt die aktuelle Zeit in Sekunden zurück
+double get_timestamp() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (double)tv.tv_sec + (double)tv.tv_usec / 1000000.0;
+}
+
+// Visualisierung: ASCII-Balken
+void print_histogram(float window[], int buffer_size, float max_h) {
+    struct winsize w;
+    ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
+
+    // Dynamische Berechnung der verfügbaren Fläche
+    int cols = w.ws_col - 15; // Platz für Achsbeschriftung links
+    int rows = w.ws_row - 5;  // Platz für Header/Footer
+
+    // Sicherheit: Nicht mehr zeichnen als im Puffer ist
+    if (cols > buffer_size) cols = buffer_size;
+    if (cols < 10) cols = 10;
+
+    system("clear");
+    printf("--- Aufgabe 3: Dynamisches Scrolling-Profil (Max %.1f cm) ---\n\n", max_h);
+
+    // Dynamische Schrittweite der Y-Achse (0.5cm oder 1.0cm je nach Fensterhöhe)
+    float step = (rows < 15) ? 1.0f : 0.5f;
+
+    for (float h = max_h; h > 0; h -= step) {
+        printf("%5.1f cm | ", h);
+        
+        // Wir zeichnen nur die neuesten 'cols' Werte aus dem Puffer
+        int start_idx = buffer_size - cols;
+        for (int i = start_idx; i < buffer_size; i++) {
+            if (window[i] >= h) {
+                printf("#");
+            } else {
+                printf(" ");
+            }
+        }
+        printf("\n");
+    }
+
+    // Dynamische Bodenlinie
+    printf("         +");
+    for (int i = 0; i < cols; i++) printf("-");
+    printf("\n         Vergangenheit <--- Zeit --- [JETZT]\n");
 }
 
 void aufgabe1(int fd) {
@@ -97,66 +148,56 @@ float interpolate(float x, CalibrationPoint *lut, int count) {
     }
     return x;
 }
-//Aufgabe 3
-#include <sys/time.h> // Für hochauflösende Zeitmessung (Linux/WSL)
-
-// Hilfsfunktion: Gibt die aktuelle Zeit in Sekunden zurück
-double get_timestamp() {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return (double)tv.tv_sec + (double)tv.tv_usec / 1000000.0;
-}
-
-// Visualisierung: ASCII-Balken
-void print_histogram(float value) {
-    int bar_length = (int)(value / 2.0); // 1 Raute pro 2 cm
-    if (bar_length > 50) bar_length = 50; // Max Länge begrenzen
-    
-    printf("%6.2f cm | ", value);
-    for (int i = 0; i < bar_length; i++) {
-        printf("#");
-    }
-    printf("\n");
-}
 
 void aufgabe3(int fd) {
     CalibrationPoint lut[100];
-    int count = get_calibration_data(lut, 100);
+    int count_lut = get_calibration_data(lut, 100);
     
-    int num_samples = 20;
-    double timestamps[20];
-    float values[20];
+    const int buffer_size = 300; // Ein großer Puffer für breite Monitore
+    float window[300] = {0};     // Mit Nullen vorfüllen
+    float floor_dist = 0;
+    float max_object_height = 10.0; // (max 10cm)
+
+    printf("Schritt 1: Kalibrierung. Bitte Sensor auf den freien Boden richten...\n");
+    sleep(1);
     
-    printf("\n--- Aufgabe 3: Echtzeit-Profil & Timing ---\n");
-    
-    for (int i = 0; i < num_samples; i++) {
-        timestamps[i] = get_timestamp();
-        float raw = get_sensor_value(fd);
-        values[i] = interpolate(raw, lut, count); // Korrigierten Wert nutzen
-        
-        // Live Visualisierung
-        print_histogram(values[i]);
-        
-        save_measurement_task3(values[i], timestamps[i]);
+    // Mittelwert aus 5 Messungen für stabilen Bodenwert
+    float sum = 0;
+    for(int i=0; i<5; i++) {
+        sum += interpolate(get_sensor_value(fd), lut, count_lut);
+        usleep(50000);
+    }
+    floor_dist = sum / 5.0f;
+    printf("Boden kalibriert auf: %.2f cm. Starte Scan...\n", floor_dist);
+    sleep(1);
+
+    // Hauptschleife: Führt 100 Messungen durch 
+    for (int m = 0; m < 100; m++) {
+        // 1. Wert einlesen und Höhe berechnen
+        float current_dist = interpolate(get_sensor_value(fd), lut, count_lut);
+        float height = floor_dist - current_dist;
+
+        // Plausibilitäts-Check
+        if (height < 0.3) height = 0; // Filtert Bodenrauschen
+        if (height > max_object_height) height = max_object_height;
+
+        // 2. Ring-Buffer-Shift (Werte im Array nach links rücken)
+        for (int i = 0; i < buffer_size - 1; i++) {
+            window[i] = window[i + 1];
+        }
+        window[buffer_size - 1] = height; // Aktuellster Wert ganz rechts
+
+        // 3. Zeichnen aufrufen
+        print_histogram(window, buffer_size, max_object_height);
+
+        // 4. In Datenbank speichern
+        save_measurement_task3(height, get_timestamp());
+
+        // 5. Timing (80ms entspricht ca. 12.5 Messungen pro Sekunde)
+        usleep(80000);
     }
 
-    // --- Zeit-Analyse ---
-    double min_dt = 999.0, max_dt = 0.0, sum_dt = 0.0;
-    
-    for (int i = 1; i < num_samples; i++) {
-        double dt = timestamps[i] - timestamps[i-1];
-        if (dt < min_dt) min_dt = dt;
-        if (dt > max_dt) max_dt = dt;
-        sum_dt += dt;
-    }
-    
-    double avg_dt = sum_dt / (num_samples - 1);
-
-    printf("\n--- Timing Statistik ---\n");
-    printf("Min Zeitabstand: %.4f s\n", min_dt);
-    printf("Max Zeitabstand: %.4f s\n", max_dt);
-    printf("Durchschnitt:    %.4f s\n", avg_dt);
-    
+    printf("\nMessreihe beendet. Daten exportiert.\n");
     export_to_csv("messung_3.csv");
 }
 //Aufgabe4
