@@ -14,7 +14,6 @@ message(STATUS "SQLite3_LIBRARIES: ${SQLite3_LIBRARIES}")
 add_executable(LaborTask1 
     src/main.c 
     src/sensor.c 
-    src/database.c
 )
 
 target_include_directories(LaborTask1 PRIVATE ${SQLite3_INCLUDE_DIRS})
